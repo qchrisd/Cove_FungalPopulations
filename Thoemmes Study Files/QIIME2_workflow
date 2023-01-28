@@ -1,0 +1,123 @@
+source activate qiime2-2019.10
+
+qiime tools import \
+--type EMPPairedEndSequences \
+--input-path emp-paired-end-sequences \
+--output-path emp-paired-end-sequences.qza
+
+#demultiplex sequences
+
+qiime demux emp-paired \
+--m-barcodes-file metadata_Mariana \
+--m-barcodes-column BarcodeSequence \
+--p-no-golay-error-correction \
+--i-seqs emp-paired-end-sequences.qza \
+--o-per-sample-sequences demux.qza \
+--o-error-correction-details demux-details.qza
+
+#create a visualization of the data
+
+qiime demux summarize \
+--i-data demux.qza \
+--o-visualization demux.qzv
+
+#join forward and reverse reads
+
+qiime vsearch join-pairs \
+--i-demultiplexed-seqs demux.qza \
+--o-joined-sequences demux-joined.qza
+
+#view the data
+
+qiime demux summarize \
+--i-data demux-joined.qza \
+--o-visualization demux-joined.qzv
+
+#quality filter based on q-score
+
+qiime quality-filter q-score-joined \
+--i-demux demux-joined.qza \
+--o-filtered-sequences demux-joined-filtered.qza \
+--o-filter-stats demux-joined-filter-stats.qza
+
+#filter (deblur), trim, and select representative sequences
+
+qiime deblur denoise-16S \
+--i-demultiplexed-seqs demux-joined-filtered.qza \
+--p-trim-length 250 \
+--p-sample-stats \
+--o-representative-sequences rep-seqs.qza \
+--o-table table.qza \
+--o-stats deblur-stats.qza \
+--verbose
+
+#view the data
+
+qiime feature-table summarize \
+--i-table table.qza \
+--o-visualization table.qzv
+
+#import representative set of sequences
+
+qiime tools import \
+--type FeatureData[Sequence] \
+--input-path gg_13_8_99_otus.fasta \
+--output-path gg_13_8_99_otus.qza
+
+#import representative set of taxonomy
+
+qiime tools import \
+--type FeatureData[Taxonomy] \
+--input-format HeaderlessTSVTaxonomyFormat \
+--input-path gg_13_8_99_otu_taxonomy.txt \
+--output-path gg_13_8_99_otus_taxonomy.qza
+
+#extract the reads from your representative set
+
+qiime feature-classifier extract-reads \
+--i-sequences gg_13_8_99_otus.qza \
+--p-f-primer GTGCCAGCMGCCGCGGTAA \
+--p-r-primer GGACTACHVGGGTWTCTAAT \
+--p-trunc-len 250 \
+--p-min-length 230 \
+--p-max-length 400 \
+--o-reads ref-seqs_99.qza \
+--verbose
+
+#train the classifier
+
+qiime feature-classifier fit-classifier-naive-bayes \
+--i-reference-reads ref-seqs_99.qza \
+--i-reference-taxonomy gg_13_8_99_otus_taxonomy.qza \
+--o-classifier classifier.qza
+
+#use classifier to assign sequence information to your dataset
+
+qiime feature-classifier classify-sklearn \
+--i-classifier classifier.qza \
+--i-reads rep-seqs.qza \
+--o-classification taxonomy-deblur.qza
+
+#view data
+
+qiime metadata tabulate \
+--m-input-file taxonomy-deblur.qza \
+--o-visualization taxonomy-deblur.qzv
+
+#concat your feature and taxonomy tables and summarize taxonomy to species level
+
+qiime taxa collapse \
+--i-table table.qza \
+--i-taxonomy taxonomy-deblur.qza \
+--p-level 7 \
+--output-dir taxtable1
+
+#export concat tables
+
+qiime tools export \
+--input-path taxtable1/collapsed_table.qza \
+--output-path extracted-otu-table-w-taxonomy-deblur
+
+biom convert \
+-i extracted-otu-table-w-taxonomy-deblur/feature-table.biom \
+-o otu-table-w-taxonomy-deblur.txt --to-tsv --table-type "OTU table"
